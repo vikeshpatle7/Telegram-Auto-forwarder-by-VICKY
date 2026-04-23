@@ -30,6 +30,12 @@ DB_PATH = DATA_DIR / "telefeed.db"
 # --------------- Database (SQLite) ---------------
 import aiosqlite
 
+# Whitelist of allowed database fields for security
+ALLOWED_DB_FIELDS = {
+    "settings", "filters", "whitelist", "blacklist", 
+    "transformation", "delay_secs", "translate_lang"
+}
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""CREATE TABLE IF NOT EXISTS redirections (
@@ -119,6 +125,10 @@ async def db_del_redir(user_id, name):
         await db.commit()
 
 async def db_update_field(user_id, name, field, value):
+    """Update a field with SQL injection protection via whitelist."""
+    if field not in ALLOWED_DB_FIELDS:
+        raise ValueError(f"Invalid field: {field}")
+    
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             f"UPDATE redirections SET {field}=? WHERE user_id=? AND name=?",
@@ -202,7 +212,7 @@ def apply_power(text, rules):
     for rule in rules:
         rule = rule.strip()
         if not rule: continue
-        m = re.match(r'^"(.*)"\s*,\s*"(.*)"$', rule)
+        m = re.match(r'^"(.*?)"\s*,\s*"(.*?)"$', rule)
         if m:
             text = text.replace(m.group(1), m.group(2))
             continue
@@ -321,7 +331,7 @@ async def setup_forwarding(client: TelegramClient, user_id: int):
                     print(f"[ERROR] Forward {rd['name']}→{dest}: {e}")
 
     handler = client.on(events.NewMessage(chats=list(source_ids)))(on_message)
-    active_handlers[user_id] = [on_message]
+    active_handlers[user_id] = [handler]
     print(f"[INFO] Forwarding active for user {user_id} | {len(source_ids)} source(s)")
 
 # --------------- Bot Commands ---------------
@@ -516,7 +526,9 @@ async def h_power(event):
     uid, name = event.sender_id, event.pattern_match.group(1)
     rules = [r.strip() for r in event.pattern_match.group(2).split("\n") if r.strip()]
     rd = await db_get_redir(uid, name)
-    if not rd: return
+    if not rd: 
+        await event.respond(f"❌ {name} not found.")
+        return
     tf = json.loads(rd["transformation"] or "{}")
     tf["power"] = rules
     await db_update_field(uid, name, "transformation", tf)
@@ -527,7 +539,9 @@ async def h_rmlines(event):
     uid, name = event.sender_id, event.pattern_match.group(1)
     kws = [k.strip() for k in event.pattern_match.group(2).split("\n") if k.strip()]
     rd = await db_get_redir(uid, name)
-    if not rd: return
+    if not rd: 
+        await event.respond(f"❌ {name} not found.")
+        return
     tf = json.loads(rd["transformation"] or "{}")
     tf["removeLines"] = kws
     await db_update_field(uid, name, "transformation", tf)

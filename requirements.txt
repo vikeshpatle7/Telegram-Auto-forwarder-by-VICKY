@@ -1,4 +1,4 @@
 telethon==1.37.0
 aiosqlite==0.20.0
 openai==1.82.0
-cryptg==0.4.0
+cryptg>=0.3.2
